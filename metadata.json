@@ -1,0 +1,6 @@
+{
+  "name": "Webcam Talent Recruitment Hub",
+  "description": "Professional model recruitment portal, interactive token payout estimator, and applications tracking dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

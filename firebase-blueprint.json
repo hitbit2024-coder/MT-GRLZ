@@ -1,0 +1,180 @@
+{
+  "entities": {
+    "applicant": {
+      "title": "Model Applicant",
+      "description": "An applicant seeking to join the webcam talent network",
+      "type": "object",
+      "properties": {
+        "fullName": {
+          "type": "string",
+          "description": "The real full name of the applicant"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "The public screen name or display name"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Applicant's email address"
+        },
+        "age": {
+          "type": "integer",
+          "description": "The age of the applicant, must be 18+"
+        },
+        "location": {
+          "type": "string",
+          "description": "The country or region of the applicant"
+        },
+        "primaryCategory": {
+          "type": "string",
+          "description": "The primary streaming category"
+        },
+        "languages": {
+          "type": "string",
+          "description": "Languages spoken by the applicant"
+        },
+        "internetSpeed": {
+          "type": "string",
+          "description": "Internet upload speed descriptor"
+        },
+        "experience": {
+          "type": "string",
+          "description": "Prior streaming or webcam experience info"
+        },
+        "introduction": {
+          "type": "string",
+          "description": "A short cover letter or introduction written by the applicant"
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "A simulated photo URL or avatar image"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["new", "reviewing", "contacted", "accepted", "declined"],
+          "description": "Current status of the recruitment lifecycle"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Internal notes added by recruiters"
+        },
+        "score": {
+          "type": "integer",
+          "description": "Simulated applicant matching score out of 100"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the application was created"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the application was last updated"
+        }
+      },
+      "required": [
+        "fullName",
+        "displayName",
+        "email",
+        "age",
+        "location",
+        "primaryCategory",
+        "status",
+        "createdAt"
+      ]
+    },
+    "audition": {
+      "title": "Audition",
+      "description": "An audition slot or session for a candidate",
+      "type": "object",
+      "properties": {
+        "applicantId": {
+          "type": "string",
+          "description": "The ID of the corresponding applicant"
+        },
+        "applicantName": {
+          "type": "string",
+          "description": "Stage name of the applicant"
+        },
+        "email": {
+          "type": "string",
+          "description": "Email of the applicant"
+        },
+        "category": {
+          "type": "string",
+          "description": "Performance category"
+        },
+        "scheduledTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO date-time when the audition is scheduled"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "scheduled", "live", "completed", "canceled"],
+          "description": "Status of the audition"
+        },
+        "streamKey": {
+          "type": "string",
+          "description": "Mock key for feed checking"
+        },
+        "testWebcamQuality": {
+          "type": "string",
+          "description": "Detected webcam info or input selection"
+        },
+        "streamBandwidth": {
+          "type": "string",
+          "description": "Mock throughput/upload reading"
+        },
+        "coachingNotes": {
+          "type": "string",
+          "description": "Specific styling and setup suggestions"
+        },
+        "scoreLighting": {
+          "type": "integer",
+          "description": "Score out of 100 for framing and lighting"
+        },
+        "scoreInteractive": {
+          "type": "integer",
+          "description": "Score out of 100 for microphone and interaction"
+        },
+        "scoreStyling": {
+          "type": "integer",
+          "description": "Score out of 100 for outfit and styling aesthetic"
+        },
+        "overallRating": {
+          "type": "integer",
+          "description": "Combined rating out of 100"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "applicantId",
+        "applicantName",
+        "email",
+        "status",
+        "scheduledTime",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/applicants/{applicantId}": {
+      "schema": "applicant",
+      "description": "Individually submitted model applications"
+    },
+    "/auditions/{auditionId}": {
+      "schema": "audition",
+      "description": "Audition bookings and management assessment records"
+    }
+  }
+}

@@ -1,0 +1,116 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net: Default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Common Primitives & Security Helpers
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Role-Based Access: Admin is verified and matches owner email
+    function isAdmin() {
+      return isSignedIn() &&
+             request.auth.token.email == 'hitbit2024@gmail.com' &&
+             request.auth.token.email_verified == true;
+    }
+
+    // Helper validating model applicant data integrity (Anti-Update-Gap schema guard)
+    function isValidApplicant(data) {
+      return data.keys().hasAll(['fullName', 'displayName', 'email', 'age', 'location', 'primaryCategory', 'status', 'createdAt']) &&
+             data.keys().size() <= 16 &&
+             data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100 &&
+             data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 50 &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 100 &&
+             data.age is int && data.age >= 18 && data.age <= 120 &&
+             data.location is string && data.location.size() >= 2 && data.location.size() <= 100 &&
+             data.primaryCategory is string && data.primaryCategory.size() >= 2 && data.primaryCategory.size() <= 50 &&
+             data.status is string && (data.status == 'new' || data.status == 'reviewing' || data.status == 'contacted' || data.status == 'accepted' || data.status == 'declined') &&
+             (!data.keys().contains('languages') || (data.languages is string && data.languages.size() <= 200)) &&
+             (!data.keys().contains('internetSpeed') || (data.internetSpeed is string && data.internetSpeed.size() <= 100)) &&
+             (!data.keys().contains('experience') || (data.experience is string && data.experience.size() <= 100)) &&
+             (!data.keys().contains('introduction') || (data.introduction is string && data.introduction.size() <= 2000)) &&
+             (!data.keys().contains('photoUrl') || (data.photoUrl is string && data.photoUrl.size() <= 500)) &&
+             (!data.keys().contains('notes') || (data.notes is string && data.notes.size() <= 2000)) &&
+             (!data.keys().contains('score') || (data.score is int && data.score >= 0 && data.score <= 100)) &&
+             (!data.keys().contains('updatedAt') || data.updatedAt == request.time) &&
+             data.createdAt == request.time;
+    }
+
+    // Helper validating audition information for model candidates
+    function isValidAudition(data) {
+      return data.keys().hasAll(['applicantId', 'applicantName', 'email', 'scheduledTime', 'status', 'createdAt']) &&
+             data.keys().size() <= 16 &&
+             data.applicantId is string && data.applicantId.size() <= 128 &&
+             data.applicantName is string && data.applicantName.size() >= 2 && data.applicantName.size() <= 100 &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 100 &&
+             data.scheduledTime is string && data.scheduledTime.size() <= 50 &&
+             data.status is string && (data.status == 'pending' || data.status == 'scheduled' || data.status == 'live' || data.status == 'completed' || data.status == 'canceled') &&
+             (!data.keys().contains('streamKey') || (data.streamKey is string && data.streamKey.size() <= 100)) &&
+             (!data.keys().contains('category') || (data.category is string && data.category.size() <= 100)) &&
+             (!data.keys().contains('testWebcamQuality') || (data.testWebcamQuality is string && data.testWebcamQuality.size() <= 200)) &&
+             (!data.keys().contains('streamBandwidth') || (data.streamBandwidth is string && data.streamBandwidth.size() <= 100)) &&
+             (!data.keys().contains('coachingNotes') || (data.coachingNotes is string && data.coachingNotes.size() <= 2000)) &&
+             (!data.keys().contains('scoreLighting') || (data.scoreLighting is int && data.scoreLighting >= 0 && data.scoreLighting <= 100)) &&
+             (!data.keys().contains('scoreInteractive') || (data.scoreInteractive is int && data.scoreInteractive >= 0 && data.scoreInteractive <= 100)) &&
+             (!data.keys().contains('scoreStyling') || (data.scoreStyling is int && data.scoreStyling >= 0 && data.scoreStyling <= 100)) &&
+             (!data.keys().contains('overallRating') || (data.overallRating is int && data.overallRating >= 0 && data.overallRating <= 100)) &&
+             (!data.keys().contains('updatedAt') || data.updatedAt == request.time) &&
+             data.createdAt == request.time;
+    }
+
+    // Applicants Collection matching
+    match /applicants/{applicantId} {
+      // Admin can get and list applications. No public reads of PII is allowed.
+      allow get, list: if isAdmin();
+
+      // Guest or applicant can create an applicant document
+      allow create: if isValidId(applicantId) &&
+                       isValidApplicant(incoming()) &&
+                       incoming().status == 'new' &&
+                       (!incoming().keys().contains('notes') || incoming().notes == '') &&
+                       (!incoming().keys().contains('score') || incoming().score == 0);
+
+      // Admin can update or purge records
+      allow update: if isValidId(applicantId) &&
+                       isAdmin() &&
+                       isValidApplicant(incoming()) &&
+                       incoming().createdAt == existing().createdAt; // createdAt is immortal
+
+      allow delete: if isValidId(applicantId) && isAdmin();
+    }
+
+    // Auditions Collection matching
+    match /auditions/{auditionId} {
+      allow get: if true;
+      allow list: if isAdmin();
+      
+      allow create: if isValidId(auditionId) &&
+                       isValidAudition(incoming()) &&
+                       incoming().status == 'pending' &&
+                       (!incoming().keys().contains('coachingNotes') || incoming().coachingNotes == '');
+                       
+      allow update: if isValidId(auditionId) &&
+                       isAdmin() &&
+                       isValidAudition(incoming()) &&
+                       incoming().createdAt == existing().createdAt;
+
+      allow delete: if isValidId(auditionId) && isAdmin();
+    }
+  }
+}
