@@ -1,18 +1,21 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   collection, query, orderBy, onSnapshot, 
-  doc, updateDoc, deleteDoc, serverTimestamp 
+  doc, updateDoc, deleteDoc, serverTimestamp,
+  addDoc
 } from 'firebase/firestore';
 import { db, auth, logInWithGoogle, logOut } from '../firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { Applicant, ApplicationStatus } from '../types';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   ShieldAlert, BarChart3, Users, 
   TrendingUp, Star, MapPin, 
   Heart, Mail, CheckCircle2, 
   XOctagon, Clock, UserCheck, 
   Sparkles, ExternalLink, RefreshCw, 
-  FileCheck, LogOut, Trash2, Edit3 
+  FileCheck, LogOut, Trash2, Edit3,
+  Download
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, 
@@ -80,6 +83,20 @@ const SANDBOX_PRESETS: Applicant[] = [
 
 const COLORS = ['#d946ef', '#a855f7', '#6366f1', '#64748b', '#3b82f6', '#ec4899'];
 
+// Predefined allowlist of recruiters/admins for this prototype
+const RECRUITER_ALLOWLIST = [
+  'hitbit2024@gmail.com',
+  'admin@example.com',
+  'recruiter@example.com',
+  'recruiter@vividtalent.co'
+];
+
+function isRecruiter(email: string | null) {
+  if (!email) return false;
+  const e = email.toLowerCase();
+  return RECRUITER_ALLOWLIST.includes(e) || e.endsWith('@vividtalent.co');
+}
+
 export default function AgencyConsole() {
   const [user, setUser] = useState<User | null>(null);
   const [isAdminMode, setIsAdminMode] = useState<boolean>(false);
@@ -87,6 +104,9 @@ export default function AgencyConsole() {
   const [applicants, setApplicants] = useState<Applicant[]>([]);
   const [selectedApplicant, setSelectedApplicant] = useState<Applicant | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteName, setDeleteName] = useState<string>('');
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // Recruiter actions modal state
   const [statusInput, setStatusInput] = useState<ApplicationStatus>('new');
@@ -97,11 +117,13 @@ export default function AgencyConsole() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
-      if (currentUser && currentUser.email === 'hitbit2024@gmail.com') {
+      if (currentUser && isRecruiter(currentUser.email)) {
         setIsAdminMode(true);
-        setIsSandbox(false); // Disable sandbox on true authorized admin login
+        setIsSandbox(false); // Enable production mode on valid recruiter auth
+        setAuthError(null);
       } else {
         setIsAdminMode(false);
+        setIsSandbox(true); // Default to Sandbox fallback
       }
     });
     return () => unsubscribe();
@@ -135,6 +157,7 @@ export default function AgencyConsole() {
             fullName: data.fullName,
             displayName: data.displayName,
             email: data.email,
+            phone: data.phone || '',
             age: data.age,
             location: data.location,
             primaryCategory: data.primaryCategory,
@@ -161,10 +184,28 @@ export default function AgencyConsole() {
 
   // Handle Log In with Google
   const handleGoogleLogin = async () => {
+    setAuthError(null);
     try {
-      await logInWithGoogle();
-    } catch (err) {
-      alert("Authentication failed. Please check internet connection.");
+      const loggedUser = await logInWithGoogle();
+      if (loggedUser && !isRecruiter(loggedUser.email)) {
+        setAuthError(`Email ${loggedUser.email} is signed in but is not in the authorized Admin/Recruiter allowlist for this prototype.`);
+      }
+    } catch (err: any) {
+      console.error("Google Auth Error:", err);
+      let errorMsg = "Authentication failed. Please verify your internet connection or check browser settings.";
+      const isPopupError = 
+        err?.code === 'auth/popup-blocked' || 
+        err?.code === 'auth/cancelled-popup-request' ||
+        String(err)?.includes('popup-blocked') || 
+        String(err)?.includes('cancelled-popup-request') ||
+        String(err?.message || '').includes('popup-blocked');
+      
+      if (isPopupError) {
+        errorMsg = "Login Pop-up was Blocked or Cancelled. Note: inside the AI Studio preview iframe, browsers block popups by default. Please click the 'Open in new tab' button at the top right of the live preview frame to sign in successfully.";
+      } else if (err?.message) {
+        errorMsg = err.message;
+      }
+      setAuthError(errorMsg);
     }
   };
 
@@ -230,24 +271,176 @@ export default function AgencyConsole() {
     }
   };
 
-  // Purge / Delete candidate documentation
-  const handleDeleteApplicant = async (appId: string) => {
-    if (!confirm("Are you sure you want to permanently delete this candidate profile? This cannot be undone.")) return;
+  // Purge / Delete candidate documentation - shows confirmation modal
+  const handleDeleteApplicant = (appId: string, displayName: string) => {
+    setDeleteId(appId);
+    setDeleteName(displayName);
+  };
 
+  // Perform final deletion from Sandbox / Cloud Firestore
+  const handlePerformDelete = async (appId: string) => {
     if (isSandbox) {
       const filtered = applicants.filter((a) => a.id !== appId);
       setApplicants(filtered);
       localStorage.setItem('vivid_recruits_sandbox', JSON.stringify(filtered));
-      setSelectedApplicant(null);
+      if (selectedApplicant?.id === appId) {
+        setSelectedApplicant(null);
+      }
     } else {
       try {
         const applicantRef = doc(db, 'applicants', appId);
         await deleteDoc(applicantRef);
-        setSelectedApplicant(null);
+        if (selectedApplicant?.id === appId) {
+          setSelectedApplicant(null);
+        }
       } catch (err) {
         alert("Cloud database deletion failed: Unauthorized permissions.");
       }
     }
+  };
+
+  // Seed live database with compliant presets to make testing active CRM functional states instant
+  const handleSeedDatabase = async () => {
+    setLoading(true);
+    try {
+      const presets = [
+        {
+          fullName: "Elena Rostova",
+          displayName: "Elena_Vixen",
+          email: "elena.rostova@example.com",
+          phone: "+420 777 123 456",
+          age: 22,
+          location: "Prague, Czech Republic",
+          primaryCategory: "Cosplay & Theme",
+          languages: "Czech, Fluent English",
+          internetSpeed: "Fiber 100+ Mbps upload",
+          experience: "1 to 3 Years",
+          introduction: "Hi database review team! I love gaming and streaming with cute outfit styling. Currently modeling on Twitch looking to migrate to the private token portal.",
+          photoUrl: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=200",
+          status: "new",
+          notes: "",
+          score: 0,
+          createdAt: serverTimestamp()
+        },
+        {
+          fullName: "Naomi Takahashi",
+          displayName: "Kiki_ASMR",
+          email: "naomi.t@example.com",
+          phone: "+81 90 1234 5678",
+          age: 20,
+          location: "Tokyo, Japan",
+          primaryCategory: "ASMR & Whispering",
+          languages: "Japanese, Conversational English",
+          internetSpeed: "Fiber 100+ Mbps upload",
+          experience: "None / Complete Beginner",
+          introduction: "Hello! I am a student interested in doing relaxing audio/whispering sets. I have a high-end binaural audio microphone set but no webcam history.",
+          photoUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200",
+          status: "new",
+          notes: "",
+          score: 0,
+          createdAt: serverTimestamp()
+        },
+        {
+          fullName: "Marcus Daniels",
+          displayName: "Marc_Interactive",
+          email: "marcus.d@example.com",
+          phone: "+1 305 555 0199",
+          age: 25,
+          location: "Miami, Florida",
+          primaryCategory: "Interactive Chatting",
+          languages: "English, Spanish",
+          internetSpeed: "Standard cable (15-50 Mbps upload)",
+          experience: "3+ Years experienced",
+          introduction: "Over 3 years streaming on chat networks. Passionate about fitness, visual choreography, and hosting energetic late-night model hubs.",
+          photoUrl: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&q=80&w=200",
+          status: "new",
+          notes: "",
+          score: 0,
+          createdAt: serverTimestamp()
+        }
+      ];
+
+      for (const preset of presets) {
+        await addDoc(collection(db, 'applicants'), preset);
+      }
+      alert("Success! Seeded 3 compliant preset applicants to your live Firestore database.");
+    } catch (err: any) {
+      console.error("Error seeding live database:", err);
+      alert("Error seeding live database: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Export current list of applicant data to CSV
+  const handleExportCSV = () => {
+    if (applicants.length === 0) {
+      alert("No applicant data available to export.");
+      return;
+    }
+
+    const headers = [
+      "ID",
+      "Full Name",
+      "Stage Name",
+      "Email",
+      "Phone",
+      "Age",
+      "Location",
+      "Primary Category",
+      "Languages",
+      "Internet Speed",
+      "Experience",
+      "Introduction",
+      "Status",
+      "Score",
+      "Recruiter Notes",
+      "Created At"
+    ];
+
+    const escapeCSV = (val: any) => {
+      if (val === null || val === undefined) return '';
+      const stringified = String(val);
+      const escaped = stringified.replace(/"/g, '""');
+      if (escaped.includes(',') || escaped.includes('"') || escaped.includes('\n') || escaped.includes('\r')) {
+        return `"${escaped}"`;
+      }
+      return escaped;
+    };
+
+    const rowData = applicants.map((app) => [
+      app.id,
+      app.fullName,
+      app.displayName,
+      app.email,
+      app.phone || '',
+      app.age,
+      app.location,
+      app.primaryCategory,
+      app.languages || '',
+      app.internetSpeed || '',
+      app.experience || '',
+      app.introduction || '',
+      app.status,
+      app.score || 0,
+      app.notes || '',
+      app.createdAt
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rowData.map((row) => row.map(escapeCSV).join(','))
+    ].join('\r\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `vivid_casting_applicants_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Aggregate stats using useMemo
@@ -295,7 +488,7 @@ export default function AgencyConsole() {
           <p className="text-[11px] text-slate-500 mt-1">
             {isSandbox 
               ? 'Preview actions simulate status updates utilizing browser local storage. Official actions lock to database authorization rules.'
-              : `Admin Session Active: Connected as Owner (${user?.email}).`
+              : `Admin Session Active: Connected as Recruiter/Owner (${user?.email}).`
             }
           </p>
         </div>
@@ -303,14 +496,22 @@ export default function AgencyConsole() {
         <div className="flex items-center gap-2 self-stretch sm:self-auto">
           {user ? (
             <div className="flex items-center gap-3">
+              {user.photoURL && (
+                <img 
+                  src={user.photoURL} 
+                  alt={user.displayName || "Admin Avatar"} 
+                  className="w-8 h-8 rounded-full border border-purple-500/45 object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              )}
               <div className="text-right hidden sm:block">
                 <p className="text-xs text-slate-300 font-semibold">{user.displayName || 'Administrator'}</p>
-                <p className="text-[10px] text-purple-400 font-mono">Privileged Admin</p>
+                <p className="text-[10px] text-purple-400 font-mono font-medium">{user.email}</p>
               </div>
               <button
                 type="button"
                 onClick={() => logOut()}
-                className="flex items-center gap-1.5 py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-semibold font-mono transition"
+                className="flex items-center gap-1.5 py-1.5 px-3 bg-slate-800 hover:bg-slate-705 text-slate-300 hover:text-white rounded-lg text-xs font-semibold font-mono transition cursor-pointer"
               >
                 <LogOut className="w-3.5 h-3.5" />
                 Sign Out
@@ -321,7 +522,7 @@ export default function AgencyConsole() {
               <button
                 type="button"
                 onClick={handleGoogleLogin}
-                className="flex-1 sm:flex-none flex items-center justify-center gap-2 py-2 px-4 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold shadow-lg transition"
+                className="flex-1 sm:flex-none flex items-center justify-center gap-2 py-2 px-4 bg-purple-600 hover:bg-purple-550 text-white rounded-xl text-xs font-bold shadow-lg transition cursor-pointer"
               >
                 Sign In as Admin
               </button>
@@ -329,7 +530,7 @@ export default function AgencyConsole() {
                 <button
                   type="button"
                   onClick={enableSandboxMode}
-                  className="flex-1 sm:flex-none py-2 px-4 bg-slate-800/80 hover:bg-slate-800 text-slate-300 rounded-xl text-xs font-semibold transition font-mono"
+                  className="flex-1 sm:flex-none py-2 px-4 bg-slate-800/80 hover:bg-slate-850 text-slate-300 rounded-xl text-xs font-semibold transition font-mono cursor-pointer"
                 >
                   Enter Demo Sandbox
                 </button>
@@ -338,6 +539,14 @@ export default function AgencyConsole() {
           )}
         </div>
       </div>
+
+      {/* Inline Auth Error Banner */}
+      {authError && (
+        <div className="bg-red-950/40 border border-red-900/30 text-red-200 text-xs py-2.5 px-4 rounded-xl flex items-center gap-2 animate-fade-in">
+          <ShieldAlert className="w-4 h-4 text-red-400 flex-shrink-0" />
+          <span>{authError}</span>
+        </div>
+      )}
 
       {/* Stats Deck */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="stats-deck">
@@ -379,61 +588,114 @@ export default function AgencyConsole() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Main List Table */}
           <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl p-5">
-            <h3 className="text-md font-semibold text-slate-100 flex items-center justify-between mb-4">
-              <span>Model Applicant Portfolio</span>
-              <span className="text-xs font-mono font-normal text-slate-400">{applicants.length} Entries found</span>
-            </h3>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 pb-3 border-b border-slate-800/80">
+              <div>
+                <h3 className="text-md font-semibold text-slate-100">Model Applicant Portfolio</h3>
+                <span className="text-xs font-mono font-normal text-slate-500">{applicants.length} Entries found</span>
+              </div>
+              {applicants.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleExportCSV}
+                  className="flex items-center gap-1.5 py-1.5 px-3 bg-purple-600 hover:bg-purple-500 hover:text-white text-white rounded-lg text-xs font-semibold font-mono transition shadow-md shadow-purple-950/20 cursor-pointer self-stretch sm:self-auto justify-center"
+                  id="btn-export-csv"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Export CSV
+                </button>
+              )}
+            </div>
 
             {applicants.length === 0 ? (
-              <div className="text-center py-16 text-slate-500 text-xs">
-                No recruiter applications stored yet. Try submitting a new application form on the front page and it will sync here automatically!
+              <div className="text-center py-16 px-5 bg-slate-950 border border-slate-800/80 rounded-2xl flex flex-col items-center justify-center space-y-4">
+                <ShieldAlert className="w-8 h-8 text-purple-400" />
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-slate-200">Your live Firestore database is currently empty</p>
+                  <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+                    Real candidate applications submitted through the <strong className="text-purple-300">Apply Form</strong> on the frontpage will safely sync here in real-time.
+                  </p>
+                  <p className="text-[11px] text-slate-500 max-w-sm mx-auto leading-relaxed pt-2">
+                    To test evaluation workflows (such as status updating, custom scoring, and recruiter notes), you can instantly seed your live database with preset applicants.
+                  </p>
+                </div>
+                {!isSandbox && isAdminMode ? (
+                  <button
+                    type="button"
+                    onClick={handleSeedDatabase}
+                    className="flex items-center gap-1.5 py-2 px-4 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-bold font-mono transition shadow-lg shadow-purple-950/20 cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-purple-100" />
+                    Seed Live Database (3 Presets)
+                  </button>
+                ) : (
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    (Sign In as an authorized Recruiter to enable Live Seeding)
+                  </span>
+                )}
               </div>
             ) : (
               <div className="divide-y divide-slate-800/60 max-h-[640px] overflow-y-auto pr-1">
                 {applicants.map((app) => (
-                  <button
+                  <div
                     key={app.id}
-                    type="button"
-                    onClick={() => handleSelectApplicant(app)}
-                    className={`w-full text-left p-3 rounded-xl transition flex items-center gap-3 my-1 border ${
+                    className={`group w-full p-2.5 rounded-xl transition flex items-center justify-between gap-3 my-1 border ${
                       selectedApplicant?.id === app.id
                         ? 'bg-purple-950/15 border-purple-800/60'
                         : 'bg-transparent border-transparent hover:bg-slate-800/30'
                     }`}
                   >
-                    <img 
-                      src={app.photoUrl || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=200"} 
-                      alt={app.displayName} 
-                      className="w-10 h-10 rounded-full object-cover border border-slate-800 flex-shrink-0" 
-                    />
-                    <div className="flex-grow min-w-0">
-                      <div className="flex justify-between items-start">
-                        <h4 className="text-sm font-semibold text-slate-200 truncate">{app.displayName}</h4>
-                        <span className="text-[10px] text-slate-500 font-mono ml-2">
-                          {new Date(app.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-400 truncate">{app.primaryCategory}</p>
-                      
-                      <div className="flex gap-2 mt-1.5 items-center">
-                        <span className={`text-[9px] font-mono px-1.5 py-0.2 rounded border font-semibold uppercase ${
-                          app.status === 'new' ? 'bg-purple-950/40 text-purple-400 border-purple-800/40' :
-                          app.status === 'reviewing' ? 'bg-amber-950/40 text-amber-400 border-amber-800/40' :
-                          app.status === 'contacted' ? 'bg-indigo-950/40 text-indigo-400 border-indigo-800/40' :
-                          app.status === 'accepted' ? 'bg-green-950/40 text-green-400 border-green-800/40' :
-                          'bg-slate-950/40 text-slate-400 border-slate-800/40'
-                        }`}>
-                          {app.status}
-                        </span>
-                        
-                        {app.score && app.score >= 90 && (
-                          <span className="flex items-center gap-0.5 text-[9px] text-green-400 bg-green-950/20 px-1 border border-green-900/30 rounded">
-                            <Star className="w-2.5 h-2.5 fill-green-400" /> Lead Match
+                    <button
+                      type="button"
+                      onClick={() => handleSelectApplicant(app)}
+                      className="flex-grow text-left flex items-center gap-3 min-w-0 cursor-pointer"
+                    >
+                      <img 
+                        src={app.photoUrl || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=200"} 
+                        alt={app.displayName} 
+                        className="w-10 h-10 rounded-full object-cover border border-slate-800 flex-shrink-0" 
+                      />
+                      <div className="flex-grow min-w-0">
+                        <div className="flex justify-between items-start">
+                          <h4 className="text-sm font-semibold text-slate-200 truncate group-hover:text-purple-300 transition-colors">{app.displayName}</h4>
+                          <span className="text-[10px] text-slate-500 font-mono ml-2 flex-shrink-0">
+                            {new Date(app.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                           </span>
-                        )}
+                        </div>
+                        <p className="text-xs text-slate-400 truncate">{app.primaryCategory}</p>
+                        
+                        <div className="flex gap-2 mt-1.5 items-center flex-wrap">
+                          <span className={`text-[9px] font-mono px-1.5 py-0.2 rounded border font-semibold uppercase ${
+                            app.status === 'new' ? 'bg-purple-950/40 text-purple-400 border-purple-800/40' :
+                            app.status === 'reviewing' ? 'bg-amber-950/40 text-amber-400 border-amber-800/40' :
+                            app.status === 'contacted' ? 'bg-indigo-950/40 text-indigo-400 border-indigo-800/40' :
+                            app.status === 'accepted' ? 'bg-green-950/40 text-green-400 border-green-800/40' :
+                            'bg-slate-950/40 text-slate-400 border-slate-800/40'
+                          }`}>
+                            {app.status}
+                          </span>
+                          
+                          {app.score && app.score >= 90 && (
+                            <span className="flex items-center gap-0.5 text-[9px] text-green-400 bg-green-950/20 px-1 border border-green-900/30 rounded">
+                              <Star className="w-2.5 h-2.5 fill-green-400" /> Lead Match
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </button>
+                    </button>
+
+                    {/* Row Deletion Action */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteApplicant(app.id, app.displayName || app.fullName);
+                      }}
+                      className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-950/30 rounded-lg transition opacity-0 group-hover:opacity-100 focus:opacity-100 flex-shrink-0 cursor-pointer"
+                      title="Delete Candidate"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -455,8 +717,8 @@ export default function AgencyConsole() {
                       <h3 className="text-lg font-bold text-slate-100 truncate">{selectedApplicant.displayName}</h3>
                       <button
                         type="button"
-                        onClick={() => handleDeleteApplicant(selectedApplicant.id)}
-                        className="text-slate-500 hover:text-red-400 p-1 rounded-lg transition"
+                        onClick={() => handleDeleteApplicant(selectedApplicant.id, selectedApplicant.displayName || selectedApplicant.fullName)}
+                        className="text-slate-500 hover:text-red-400 p-1 rounded-lg transition h-8 w-8 flex items-center justify-center hover:bg-red-950/20 cursor-pointer"
                         title="Delete Applicant Data"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -485,6 +747,14 @@ export default function AgencyConsole() {
                     <div>
                       <p className="text-slate-500 font-mono text-[9px] uppercase">Languages</p>
                       <p className="text-slate-200 mt-0.5 font-medium truncate">{selectedApplicant.languages}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500 font-mono text-[9px] uppercase">Email Contact</p>
+                      <p className="text-slate-200 mt-0.5 font-medium truncate" title={selectedApplicant.email}>{selectedApplicant.email}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500 font-mono text-[9px] uppercase">Mobile Number</p>
+                      <p className="text-slate-200 mt-0.5 font-medium truncate">{selectedApplicant.phone || "N/A"}</p>
                     </div>
                   </div>
 
@@ -603,6 +873,74 @@ export default function AgencyConsole() {
           </div>
         </div>
       )}
+
+      {/* Custom stylized confirmation modal for deletion */}
+      <AnimatePresence>
+        {deleteId && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setDeleteId(null);
+                setDeleteName('');
+              }}
+              className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+            />
+            
+            {/* Modal Box */}
+            <motion.div
+              initial={{ scale: 0.95, y: 15, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.95, y: 15, opacity: 0 }}
+              transition={{ type: "spring", duration: 0.3 }}
+              className="relative max-w-sm w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl z-10"
+              id="delete-confirmation-modal"
+            >
+              <div className="flex items-center gap-3 text-red-500 mb-4">
+                <div className="p-2 bg-red-950/40 border border-red-900/30 rounded-lg">
+                  <ShieldAlert className="w-5 h-5 text-red-400" />
+                </div>
+                <h3 className="text-md font-bold text-slate-100 font-sans">
+                  Confirm Profile Purge?
+                </h3>
+              </div>
+              
+              <p className="text-xs text-slate-300 leading-relaxed font-sans mb-5">
+                Are you sure you want to permanently delete the recruitment applicant file for{" "}
+                <span className="text-slate-100 font-bold">&ldquo;{deleteName}&rdquo;</span>? This action is instant and completely deletes the cloud record from secure Firestore.
+              </p>
+              
+              <div className="flex gap-3 font-mono text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeleteId(null);
+                    setDeleteName('');
+                  }}
+                  className="flex-1 py-2 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg font-semibold transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const idToDel = deleteId;
+                    setDeleteId(null);
+                    setDeleteName('');
+                    await handlePerformDelete(idToDel);
+                  }}
+                  className="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white font-semibold rounded-lg transition shadow-lg shadow-red-950/30 cursor-pointer"
+                >
+                  Purge Data
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

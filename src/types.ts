@@ -3,6 +3,7 @@ export interface Applicant {
   fullName: string;
   displayName: string;
   email: string;
+  phone?: string;
   age: number;
   location: string;
   primaryCategory: string;

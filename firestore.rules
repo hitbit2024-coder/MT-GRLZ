@@ -23,17 +23,20 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // Role-Based Access: Admin is verified and matches owner email
+    // Role-Based Access: Admin is verified and matches owner email or recruiter allowlist
     function isAdmin() {
       return isSignedIn() &&
-             request.auth.token.email == 'hitbit2024@gmail.com' &&
+             (request.auth.token.email == 'hitbit2024@gmail.com' ||
+              request.auth.token.email == 'admin@example.com' ||
+              request.auth.token.email == 'recruiter@example.com' ||
+              request.auth.token.email.endsWith('@vividtalent.co')) &&
              request.auth.token.email_verified == true;
     }
 
     // Helper validating model applicant data integrity (Anti-Update-Gap schema guard)
-    function isValidApplicant(data) {
+    function isValidApplicant(data, isUpdate) {
       return data.keys().hasAll(['fullName', 'displayName', 'email', 'age', 'location', 'primaryCategory', 'status', 'createdAt']) &&
-             data.keys().size() <= 16 &&
+             data.keys().size() <= 17 &&
              data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100 &&
              data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 50 &&
              data.email is string && data.email.size() >= 3 && data.email.size() <= 100 &&
@@ -41,6 +44,7 @@ service cloud.firestore {
              data.location is string && data.location.size() >= 2 && data.location.size() <= 100 &&
              data.primaryCategory is string && data.primaryCategory.size() >= 2 && data.primaryCategory.size() <= 50 &&
              data.status is string && (data.status == 'new' || data.status == 'reviewing' || data.status == 'contacted' || data.status == 'accepted' || data.status == 'declined') &&
+             (!data.keys().contains('phone') || (data.phone is string && data.phone.size() >= 7 && data.phone.size() <= 40)) &&
              (!data.keys().contains('languages') || (data.languages is string && data.languages.size() <= 200)) &&
              (!data.keys().contains('internetSpeed') || (data.internetSpeed is string && data.internetSpeed.size() <= 100)) &&
              (!data.keys().contains('experience') || (data.experience is string && data.experience.size() <= 100)) &&
@@ -49,11 +53,11 @@ service cloud.firestore {
              (!data.keys().contains('notes') || (data.notes is string && data.notes.size() <= 2000)) &&
              (!data.keys().contains('score') || (data.score is int && data.score >= 0 && data.score <= 100)) &&
              (!data.keys().contains('updatedAt') || data.updatedAt == request.time) &&
-             data.createdAt == request.time;
+             (isUpdate || data.createdAt == request.time);
     }
 
     // Helper validating audition information for model candidates
-    function isValidAudition(data) {
+    function isValidAudition(data, isUpdate) {
       return data.keys().hasAll(['applicantId', 'applicantName', 'email', 'scheduledTime', 'status', 'createdAt']) &&
              data.keys().size() <= 16 &&
              data.applicantId is string && data.applicantId.size() <= 128 &&
@@ -71,7 +75,7 @@ service cloud.firestore {
              (!data.keys().contains('scoreStyling') || (data.scoreStyling is int && data.scoreStyling >= 0 && data.scoreStyling <= 100)) &&
              (!data.keys().contains('overallRating') || (data.overallRating is int && data.overallRating >= 0 && data.overallRating <= 100)) &&
              (!data.keys().contains('updatedAt') || data.updatedAt == request.time) &&
-             data.createdAt == request.time;
+             (isUpdate || data.createdAt == request.time);
     }
 
     // Applicants Collection matching
@@ -81,7 +85,7 @@ service cloud.firestore {
 
       // Guest or applicant can create an applicant document
       allow create: if isValidId(applicantId) &&
-                       isValidApplicant(incoming()) &&
+                       isValidApplicant(incoming(), false) &&
                        incoming().status == 'new' &&
                        (!incoming().keys().contains('notes') || incoming().notes == '') &&
                        (!incoming().keys().contains('score') || incoming().score == 0);
@@ -89,7 +93,7 @@ service cloud.firestore {
       // Admin can update or purge records
       allow update: if isValidId(applicantId) &&
                        isAdmin() &&
-                       isValidApplicant(incoming()) &&
+                       isValidApplicant(incoming(), true) &&
                        incoming().createdAt == existing().createdAt; // createdAt is immortal
 
       allow delete: if isValidId(applicantId) && isAdmin();
@@ -98,16 +102,16 @@ service cloud.firestore {
     // Auditions Collection matching
     match /auditions/{auditionId} {
       allow get: if true;
-      allow list: if isAdmin();
+      allow list: if true;
       
       allow create: if isValidId(auditionId) &&
-                       isValidAudition(incoming()) &&
+                       isValidAudition(incoming(), false) &&
                        incoming().status == 'pending' &&
                        (!incoming().keys().contains('coachingNotes') || incoming().coachingNotes == '');
                        
       allow update: if isValidId(auditionId) &&
                        isAdmin() &&
-                       isValidAudition(incoming()) &&
+                       isValidAudition(incoming(), true) &&
                        incoming().createdAt == existing().createdAt;
 
       allow delete: if isValidId(auditionId) && isAdmin();

@@ -1,4 +1,77 @@
 import React, { useState, useEffect } from 'react';
+import { onAuthStateChanged, User, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
+import { auth } from './firebase';
+
+interface AuthContextType {
+  user: User | null;
+  loading: boolean;
+  isAdmin: boolean;
+  authError: string | null;
+  loginWithGoogle: () => Promise<User>;
+  logout: () => Promise<void>;
+  setAuthError: (err: string | null) => void;
+}
+
+export const AuthContext = React.createContext<AuthContextType | null>(null);
+
+export function useAuth() {
+  const context = React.useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+}
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setIsAdmin(currentUser?.email === 'hitbit2024@gmail.com');
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const loginWithGoogle = async () => {
+    const provider = new GoogleAuthProvider();
+    setAuthError(null);
+    try {
+      const result = await signInWithPopup(auth, provider);
+      return result.user;
+    } catch (error: any) {
+      console.error("Auth sign-in error in App.tsx: ", error);
+      let errorMsg = "Login failed. Please verify your connection or check browser settings.";
+      if (error?.code === 'auth/popup-blocked' || error?.code === 'auth/cancelled-popup-request' || String(error?.message || '').includes('popup-blocked')) {
+        errorMsg = "Login Pop-up was Blocked/Cancelled. Note: in the iframe sandbox, browser blocks popups by default. Click 'Open in new tab' at the top-right to sign in successfully.";
+      } else if (error?.message) {
+        errorMsg = error.message;
+      }
+      setAuthError(errorMsg);
+      throw error;
+    }
+  };
+
+  const logout = async () => {
+    setAuthError(null);
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error("Auth sign-out error in App.tsx: ", error);
+      throw error;
+    }
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, loading, isAdmin, authError, loginWithGoogle, logout, setAuthError }}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
 import { 
   Shield, DollarSign, Cpu, HelpCircle, 
   Settings, Check, Video, Lock, 
@@ -36,7 +109,8 @@ function FAQItem({ question, answer }: FAQItemProps) {
   );
 }
 
-export default function App() {
+export function AppContent() {
+  const { user, loading, isAdmin, loginWithGoogle, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<'talent' | 'auditions' | 'console'>('talent');
   const [registeredCandidate, setRegisteredCandidate] = useState<{
     id: string;
@@ -146,6 +220,50 @@ export default function App() {
                 >
                   Console
                 </button>
+              </div>
+
+              {/* Google Sign In / Account Status Widget */}
+              <div className="flex items-center gap-2 pl-2">
+                {user ? (
+                  <div className="flex items-center gap-1.5 bg-neutral-900 border border-white/10 p-0.5 rounded-none">
+                    {user.photoURL && (
+                      <img 
+                        src={user.photoURL} 
+                        alt={user.displayName || "User"} 
+                        className="w-[28px] h-[28px] rounded-none object-cover border border-white/10"
+                        referrerPolicy="no-referrer"
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await logout();
+                        setActiveTab('talent');
+                      }}
+                      className="py-1 px-2 text-[9px] font-black uppercase tracking-widest text-red-400 hover:text-red-300 transition-colors cursor-pointer"
+                      title="Sign Out of Vivid"
+                    >
+                      Sign Out
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const logged = await loginWithGoogle();
+                        if (logged?.email === 'hitbit2024@gmail.com') {
+                          setActiveTab('console');
+                        }
+                      } catch (err) {
+                        console.error("Login failed: ", err);
+                      }
+                    }}
+                    className="py-1.5 px-3 bg-brand-lime text-black text-[9px] font-black uppercase tracking-widest hover:bg-neutral-200 transition-colors cursor-pointer"
+                  >
+                    Sign In
+                  </button>
+                )}
               </div>
           </nav>
         </div>
@@ -271,7 +389,7 @@ export default function App() {
                     </div>
                     <h3 className="text-lg font-bold font-display uppercase tracking-tight text-white">Smart Copyright & Recording Masking</h3>
                     <p className="text-xs text-neutral-400 mt-3 leading-relaxed">
-                      We operate digital scraper scripts that actively scan internet archives, forums, and download communities. If any copyrighted content of your private stream appears, we file DMVAs and seize materials within minutes.
+                      We operate digital scraper scripts that actively scan internet archives, forums, and download communities. If any copyrighted content of your private stream appears, we file DMCA takedowns and seize materials within minutes.
                     </p>
                   </div>
                   <div className="flex gap-4 text-[10px] text-neutral-500 font-mono mt-6 font-bold uppercase tracking-wider">
@@ -391,5 +509,13 @@ export default function App() {
         </div>
       </footer>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }

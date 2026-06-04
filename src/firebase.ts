@@ -1,10 +1,29 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId); /* CRITICAL: The app will break without this line */
+// Embedded Firestore configuration with default values for ease of deployment, plus env overrides.
+// Client-side Firebase keys are designed to be public. If secrets rotation is needed, use VITE_ prefix env variables.
+const embeddedConfig = {
+  apiKey: "AIzaSyA7l1YKXCCRAL6cKv3MxlFj_5UXtKC2Cdk",
+  authDomain: "peppy-base-zcf5x.firebaseapp.com",
+  projectId: "peppy-base-zcf5x",
+  storageBucket: "peppy-base-zcf5x.firebasestorage.app",
+  messagingSenderId: "351079010690",
+  appId: "1:351079010690:web:88ca17d8cd01566e267f9b",
+  firestoreDatabaseId: "ai-studio-72b8f79e-fd4a-4d90-ac3b-88d6df52700a"
+};
+
+const activeApiKey = (import.meta as any).env?.VITE_FIREBASE_API_KEY || embeddedConfig.apiKey;
+const activeDatabaseId = (import.meta as any).env?.VITE_FIREBASE_DATABASE_ID || embeddedConfig.firestoreDatabaseId;
+
+const activeConfig = {
+  ...embeddedConfig,
+  apiKey: activeApiKey
+};
+
+const app = initializeApp(activeConfig);
+export const db = getFirestore(app, activeDatabaseId); /* CRITICAL: The app will break without this line */
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 

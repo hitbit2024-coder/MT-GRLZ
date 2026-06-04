@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { collection, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { motion, AnimatePresence } from 'motion/react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { 
   User, Mail, Calendar, MapPin, 
@@ -7,6 +8,9 @@ import {
   CheckCircle, FileText, UploadCloud, 
   ShieldCheck, Loader2, ArrowLeft, ArrowRight
 } from 'lucide-react';
+
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,4}$/;
+const PHONE_REGEX = /^\+?[0-9\s\-\(\)]{7,15}$/;
 
 const CATEGORIES = [
   "Interactive Chatting",
@@ -39,11 +43,13 @@ export default function ApplicationForm({ onRegistrationSuccess, onGoToAuditions
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [submitted, setSubmitted] = useState<boolean>(false);
   const [registeredId, setRegisteredId] = useState<string>('');
+  const [showSuccessToast, setShowSuccessToast] = useState<boolean>(false);
   
   // Form State
   const [fullName, setFullName] = useState<string>('');
   const [displayName, setDisplayName] = useState<string>('');
   const [email, setEmail] = useState<string>('');
+  const [phone, setPhone] = useState<string>('');
   const [age, setAge] = useState<number>(20);
   const [location, setLocation] = useState<string>('');
   const [primaryCategory, setPrimaryCategory] = useState<string>(CATEGORIES[0]);
@@ -62,6 +68,23 @@ export default function ApplicationForm({ onRegistrationSuccess, onGoToAuditions
   const [photoUrl, setPhotoUrl] = useState<string>(PRESET_AVATARS[0]);
   
   const [ageConsent, setAgeConsent] = useState<boolean>(false);
+
+  // Reactive inline state validation
+  const isEmailValid = EMAIL_REGEX.test(email);
+  const isPhoneValid = PHONE_REGEX.test(phone) && phone.trim().length >= 7 && phone.trim().length <= 15;
+
+  const isStep1Valid = 
+    fullName.trim().length >= 2 &&
+    displayName.trim().length >= 2 &&
+    isEmailValid &&
+    isPhoneValid &&
+    age >= 18;
+
+  const canSubmit = 
+    isStep1Valid &&
+    location.trim().length >= 2 &&
+    (idUploaded || idFile) &&
+    ageConsent;
 
   // Handle fake ID file upload
   const handleIdUploadFake = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -95,7 +118,8 @@ export default function ApplicationForm({ onRegistrationSuccess, onGoToAuditions
     if (step === 1) {
       if (!fullName || fullName.trim().length < 2) return "Please enter your legal full name.";
       if (!displayName || displayName.trim().length < 2) return "Please choose a professional webcam screen name.";
-      if (!email || !email.includes('@')) return "Please enter a valid email address.";
+      if (!email || !isEmailValid) return "Please enter a valid email address.";
+      if (!phone || !isPhoneValid) return "Please enter a valid phone number (7 to 15 digits).";
       if (age < 18) return "You must be 18 years or older to apply.";
     } else if (step === 2) {
       if (!location || location.trim().length < 2) return "Please provide your active location (Country/State).";
@@ -129,12 +153,12 @@ export default function ApplicationForm({ onRegistrationSuccess, onGoToAuditions
     }
 
     setSubmitting(true);
-    const applicantId = 'app_' + Math.random().toString(36).substring(2, 11);
     
     const payload = {
       fullName: fullName.trim(),
       displayName: displayName.trim(),
       email: email.trim().toLowerCase(),
+      phone: phone.trim(),
       age: Number(age),
       location: location.trim(),
       primaryCategory,
@@ -148,11 +172,19 @@ export default function ApplicationForm({ onRegistrationSuccess, onGoToAuditions
     };
 
     try {
-      // Secure write: conforms to our strict rules (status MUST be 'new', notes and score absent on create)
-      await setDoc(doc(db, 'applicants', applicantId), payload);
+      // Set up a Firestore collection reference for 'applicants' and add the document securely
+      const applicantsCollectionRef = collection(db, 'applicants');
+      const docRef = await addDoc(applicantsCollectionRef, payload);
+      const applicantId = docRef.id;
+      
       setRegisteredId(applicantId);
       setSubmitted(true);
       setSubmitting(false);
+      setShowSuccessToast(true);
+      setTimeout(() => {
+        setShowSuccessToast(false);
+      }, 5000);
+      
       if (onRegistrationSuccess) {
         onRegistrationSuccess({
           id: applicantId,
@@ -163,59 +195,109 @@ export default function ApplicationForm({ onRegistrationSuccess, onGoToAuditions
       }
     } catch (err) {
       setSubmitting(false);
-      handleFirestoreError(err, OperationType.CREATE, `applicants/${applicantId}`);
+      handleFirestoreError(err, OperationType.CREATE, 'applicants');
     }
   };
 
   if (submitted) {
     return (
-      <div className="bg-white text-black p-8 md:p-12 text-center max-w-xl mx-auto shadow-2xl relative overflow-hidden border-t-8 border-brand-lime rounded-none" id="application-success-box">
-        <div className="inline-flex items-center justify-center w-16 h-16 bg-brand-lime flex items-center justify-center text-black mb-6 rounded-none">
-          <CheckCircle className="w-10 h-10" />
-        </div>
-        <h3 className="text-2xl md:text-3xl font-black font-display uppercase tracking-tight text-white-outline text-black">Application Submitted!</h3>
-        <p className="text-sm text-neutral-600 mt-3 leading-relaxed font-sans">
-          Thank you for applying, <strong className="text-black font-bold uppercase">{displayName}</strong>. Our recruiting staff will review your age credentials and stream preferences within 24 hours.
-        </p>
-        <div className="bg-neutral-50 border border-neutral-200 p-6 mt-6 text-left space-y-3 font-mono text-xs text-neutral-750">
-          <p><span className="text-black font-extrabold font-sans uppercase">► Stage Name:</span> {displayName}</p>
-          <p><span className="text-black font-extrabold font-sans uppercase">► Category:</span> {primaryCategory}</p>
-          <p><span className="text-black font-extrabold font-sans uppercase">► Reference ID:</span> <span className="font-extrabold tracking-widest select-all bg-neutral-200 text-black px-1.5 py-0.5 rounded">{registeredId}</span></p>
-          <p><span className="text-black font-extrabold font-sans uppercase">► Status:</span> <span className="text-black font-black bg-brand-lime px-2 py-0.5 border border-black rounded-none">NEW (PENDING)</span></p>
-          <p className="text-[11px] text-neutral-500 leading-relaxed font-sans pt-1">Our system has processed your file securely. Please copy your **Reference ID** above for booking and stream diagnostics validation.</p>
-        </div>
+      <>
+        <div className="bg-white text-black p-8 md:p-12 text-center max-w-xl mx-auto shadow-2xl relative overflow-hidden border-t-8 border-brand-lime rounded-none" id="application-success-box">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-brand-lime flex items-center justify-center text-black mb-6 rounded-none">
+            <CheckCircle className="w-10 h-10" />
+          </div>
+          <h3 className="text-2xl md:text-3xl font-black font-display uppercase tracking-tight text-white-outline text-black">Application Submitted!</h3>
+          <p className="text-sm text-neutral-600 mt-3 leading-relaxed font-sans">
+            Thank you for applying, <strong className="text-black font-bold uppercase">{displayName}</strong>. Our recruiting staff will review your age credentials and stream preferences within 24 hours.
+          </p>
+          <div className="bg-neutral-50 border border-neutral-200 p-6 mt-6 text-left space-y-3 font-mono text-xs text-neutral-750">
+            <p><span className="text-black font-extrabold font-sans uppercase">► Stage Name:</span> {displayName}</p>
+            <p><span className="text-black font-extrabold font-sans uppercase">► Category:</span> {primaryCategory}</p>
+            <p><span className="text-black font-extrabold font-sans uppercase">► Contact Phone:</span> {phone}</p>
+            <p><span className="text-black font-extrabold font-sans uppercase">► Reference ID:</span> <span className="font-extrabold tracking-widest select-all bg-neutral-200 text-black px-1.5 py-0.5 rounded">{registeredId}</span></p>
+            <p><span className="text-black font-extrabold font-sans uppercase">► Status:</span> <span className="text-black font-black bg-brand-lime px-2 py-0.5 border border-black rounded-none">NEW (PENDING)</span></p>
+            <p className="text-[11px] text-neutral-500 leading-relaxed font-sans pt-1">Our system has processed your file securely. Please copy your **Reference ID** above for booking and stream diagnostics validation.</p>
+          </div>
 
-        {onGoToAuditions && (
+          {onGoToAuditions && (
+            <button
+              type="button"
+              onClick={onGoToAuditions}
+              className="mt-6 w-full py-4 bg-brand-lime text-black font-black uppercase tracking-widest text-xs hover:scale-[0.98] transition-all rounded-none cursor-pointer border-2 border-black font-sans"
+            >
+              ✦ Schedule & Practice Audition Stream (Next Step)
+            </button>
+          )}
+
           <button
             type="button"
-            onClick={onGoToAuditions}
-            className="mt-6 w-full py-4 bg-brand-lime text-black font-black uppercase tracking-widest text-xs hover:scale-[0.98] transition-all rounded-none cursor-pointer border-2 border-black font-sans"
+            onClick={() => {
+              // Reset form
+              setStep(1);
+              setSubmitted(false);
+              setFullName('');
+              setDisplayName('');
+              setEmail('');
+              setPhone('');
+              setLocation('');
+              setLanguages('');
+              setIntroduction('');
+              setIdFile(null);
+              setIdUploaded(false);
+              setAgeConsent(false);
+              setShowSuccessToast(false);
+            }}
+            className="mt-3 w-full py-2 bg-neutral-100 text-neutral-600 font-bold uppercase tracking-wider text-[9px] hover:bg-neutral-200 transition rounded-none cursor-pointer"
           >
-            ✦ Schedule & Practice Audition Stream (Next Step)
+            Submit Another Application
           </button>
-        )}
+        </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            // Reset form
-            setStep(1);
-            setSubmitted(false);
-            setFullName('');
-            setDisplayName('');
-            setEmail('');
-            setLocation('');
-            setLanguages('');
-            setIntroduction('');
-            setIdFile(null);
-            setIdUploaded(false);
-            setAgeConsent(false);
-          }}
-          className="mt-3 w-full py-2 bg-neutral-100 text-neutral-600 font-bold uppercase tracking-wider text-[9px] hover:bg-neutral-200 transition rounded-none cursor-pointer"
-        >
-          Submit Another Application
-        </button>
-      </div>
+        {/* Floating Success Notification Toast Overlay */}
+        <AnimatePresence>
+          {showSuccessToast && (
+            <motion.div
+              initial={{ opacity: 0, y: 50, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.95 }}
+              transition={{ type: "spring", stiffness: 300, damping: 25 }}
+              className="fixed bottom-6 right-6 z-[100] max-w-sm w-full bg-neutral-950 border-2 border-brand-lime p-5 shadow-2xl overflow-hidden font-sans pointer-events-auto text-white text-left"
+              id="success-toast-overlay"
+            >
+              {/* Radial gradient background aura */}
+              <div className="absolute top-0 right-0 w-24 h-24 bg-brand-lime/10 blur-xl pointer-events-none rounded-full"></div>
+              
+              <div className="flex gap-4 items-start relative z-10">
+                <div className="p-2 bg-brand-lime text-black shrink-0">
+                  <CheckCircle className="w-5 h-5" />
+                </div>
+                <div className="space-y-1 select-none flex-1 min-w-0">
+                  <h4 className="text-xs font-black uppercase tracking-widest text-brand-lime">
+                    Firestore Replicated
+                  </h4>
+                  <p className="text-[11px] font-bold text-white uppercase tracking-tight">
+                    Document Successfully Written
+                  </p>
+                  <p className="text-[10px] text-zinc-400 font-mono select-all truncate mt-2 bg-zinc-900 border border-white/10 px-1.5 py-1">
+                    ID: {registeredId}
+                  </p>
+                  <p className="text-[9px] text-zinc-500 leading-normal pt-1">
+                    Replication targeting &lsquo;applicants&rsquo; pool completed and validated.
+                  </p>
+                </div>
+              </div>
+
+              {/* Animated drainage line to show time remaining */}
+              <motion.div 
+                initial={{ width: "100%" }}
+                animate={{ width: "0%" }}
+                transition={{ duration: 5, ease: "linear" }}
+                className="absolute bottom-0 left-0 h-1 bg-brand-lime"
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </>
     );
   }
 
@@ -294,17 +376,52 @@ export default function ApplicationForm({ onRegistrationSuccess, onGoToAuditions
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-[10px] uppercase font-black text-black tracking-widest font-mono block">Contact Email Address</label>
-              <input
-                type="email"
-                required
-                placeholder="model@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full border-b-2 border-black py-2.5 focus:outline-none bg-transparent placeholder:text-neutral-300 text-black text-sm font-semibold rounded-none"
-              />
-              <p className="text-[10px] text-zinc-500 leading-normal pt-1">We send booking schedules and confidential setup guides here.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div className="space-y-1.5">
+                <label className="text-[10px] uppercase font-black text-black tracking-widest font-mono block">Contact Email Address</label>
+                <input
+                  type="email"
+                  required
+                  pattern="[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,4}"
+                  placeholder="model@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className={`w-full border-b-2 py-2.5 focus:outline-none bg-transparent placeholder:text-neutral-300 text-black text-sm font-semibold rounded-none transition-colors ${
+                    email ? (isEmailValid ? 'border-black' : 'border-red-500 focus:border-red-600') : 'border-black'
+                  }`}
+                />
+                <p className="text-[10px] text-zinc-500 leading-normal pt-1">
+                  {email && !isEmailValid ? (
+                    <span className="text-red-500 font-bold">⚠️ Invalid email format.</span>
+                  ) : (
+                    "We send booking schedules or setup guides here."
+                  )}
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] uppercase font-black text-black tracking-widest font-mono block">Mobile / Phone Number</label>
+                <input
+                  type="tel"
+                  required
+                  pattern="^\+?[0-9\s\-\(\)]{7,15}$"
+                  minLength={7}
+                  maxLength={15}
+                  placeholder="+1 (555) 019-2834"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  className={`w-full border-b-2 py-2.5 focus:outline-none bg-transparent placeholder:text-neutral-300 text-black text-sm font-semibold rounded-none transition-colors ${
+                    phone ? (isPhoneValid ? 'border-black' : 'border-red-500 focus:border-red-600') : 'border-black'
+                  }`}
+                />
+                <p className="text-[10px] text-zinc-500 leading-normal pt-1">
+                  {phone && !isPhoneValid ? (
+                    <span className="text-red-500 font-bold">⚠️ Length must be 7-15 digits.</span>
+                  ) : (
+                    "Required for validation & onboarding."
+                  )}
+                </p>
+              </div>
             </div>
           </div>
         )}
@@ -547,7 +664,8 @@ export default function ApplicationForm({ onRegistrationSuccess, onGoToAuditions
               <button
                 type="button"
                 onClick={handleNext}
-                className="flex items-center gap-2 py-3.5 px-7 bg-black text-brand-lime font-black uppercase tracking-widest text-[10px] hover:scale-[0.98] transition-all rounded-none cursor-pointer"
+                disabled={step === 1 && !isStep1Valid}
+                className="flex items-center gap-2 py-3.5 px-7 bg-black text-brand-lime font-black uppercase tracking-widest text-[10px] hover:scale-[0.98] transition-all rounded-none disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
                 Continue
                 <ArrowRight className="w-4 h-4 text-brand-lime stroke-[2.5]" />
@@ -555,8 +673,8 @@ export default function ApplicationForm({ onRegistrationSuccess, onGoToAuditions
             ) : (
               <button
                 type="submit"
-                disabled={submitting}
-                className="flex items-center gap-2 py-4 px-8 bg-black text-brand-lime font-black uppercase tracking-widest text-[10px] hover:scale-[0.98] transition-all rounded-none disabled:opacity-50 cursor-pointer animate-pulse"
+                disabled={submitting || !canSubmit}
+                className="flex items-center gap-2 py-4 px-8 bg-black text-brand-lime font-black uppercase tracking-widest text-[10px] hover:scale-[0.98] transition-all rounded-none disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer animate-pulse"
               >
                 {submitting ? (
                   <>

@@ -157,7 +157,7 @@ interface CastingDeskProps {
 export default function CastingDesk({ initialApplicant, onExit }: CastingDeskProps) {
   const [user, setUser] = useState<User | null>(null);
   const [isAdminMode, setIsAdminMode] = useState<boolean>(false);
-  const [isSandbox, setIsSandbox] = useState<boolean>(true);
+  const [isSandbox, setIsSandbox] = useState<boolean>(false);
 
   // General state
   const [auditions, setAuditions] = useState<any[]>([]);
@@ -356,10 +356,23 @@ export default function CastingDesk({ initialApplicant, onExit }: CastingDeskPro
     };
   };
 
+const RECRUITER_ALLOWLIST = [
+  'hitbit2024@gmail.com',
+  'admin@example.com',
+  'recruiter@example.com',
+  'recruiter@vividtalent.co'
+];
+
+function isRecruiter(email: string | null) {
+  if (!email) return false;
+  const e = email.toLowerCase();
+  return RECRUITER_ALLOWLIST.includes(e) || e.endsWith('@vividtalent.co');
+}
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
-      if (currentUser && currentUser.email === 'hitbit2024@gmail.com') {
+      if (currentUser && isRecruiter(currentUser.email)) {
         setIsAdminMode(true);
         setIsSandbox(false);
         setCurrentMode('admin'); // Auto flip to coordinator view if true manager logs in
@@ -415,7 +428,7 @@ export default function CastingDesk({ initialApplicant, onExit }: CastingDeskPro
         setAuditions(SANDBOX_AUDITIONS);
         localStorage.setItem('vivid_auditions_sandbox', JSON.stringify(SANDBOX_AUDITIONS));
       }
-    } else {
+    } else if (isAdminMode) {
       setLoading(true);
       const q = query(collection(db, 'auditions'), orderBy('createdAt', 'desc'));
       const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -435,8 +448,12 @@ export default function CastingDesk({ initialApplicant, onExit }: CastingDeskPro
         setLoading(false);
       });
       return () => unsubscribe();
+    } else {
+      // For applicants, don't auto-fetch all auditions.
+      setAuditions([]);
+      setLoading(false);
     }
-  }, [isSandbox]);
+  }, [isSandbox, isAdminMode]);
 
   // Sync parameters if initial applicant changes
   useEffect(() => {
@@ -560,16 +577,37 @@ export default function CastingDesk({ initialApplicant, onExit }: CastingDeskPro
   const [searchedAuditions, setSearchedAuditions] = useState<any[]>([]);
   const [searched, setSearched] = useState(false);
 
-  const handleLookupAuditionByEmail = () => {
+  const handleLookupAuditionByEmail = async () => {
     if (!lookupEmail || !lookupEmail.includes('@')) {
       alert("Please enter a valid lookup email.");
       return;
     }
-    const filtered = auditions.filter(aud => aud.email.toLowerCase() === lookupEmail.trim().toLowerCase());
-    setSearchedAuditions(filtered);
-    setSearched(true);
-    if (filtered.length > 0) {
-      setSelectedAudition(filtered[0]);
+    
+    if (isSandbox) {
+      const filtered = auditions.filter(aud => aud.email.toLowerCase() === lookupEmail.trim().toLowerCase());
+      setSearchedAuditions(filtered);
+      setSearched(true);
+      if (filtered.length > 0) {
+        setSelectedAudition(filtered[0]);
+      }
+    } else {
+      try {
+        const q = query(collection(db, 'auditions'), where('email', '==', lookupEmail.trim().toLowerCase()));
+        const snap = await getDocs(q);
+        const filtered = snap.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate().toISOString() : doc.data().createdAt
+        }));
+        setSearchedAuditions(filtered);
+        setSearched(true);
+        if (filtered.length > 0) {
+          setSelectedAudition(filtered[0]);
+        }
+      } catch (err) {
+        console.error("Error looking up audition:", err);
+        alert("Failed to securely verify email against active casting calls. Please make sure you are online or try again.");
+      }
     }
   };
 
@@ -704,7 +742,7 @@ export default function CastingDesk({ initialApplicant, onExit }: CastingDeskPro
     return "https://vivid-casting-studio.app";
   };
 
-  const handleShortenUrl = async () => {
+  const handleShortenUrl = async (slugOverride?: string | any) => {
     if (!tinyurlApiKey.trim()) {
       setShortenError("Please enter or verify your TinyURL API Token first.");
       return;
@@ -719,8 +757,9 @@ export default function CastingDesk({ initialApplicant, onExit }: CastingDeskPro
         domain: "tinyurl.com"
       };
 
-      if (customShortSlug.trim()) {
-        payload.alias = customShortSlug.trim().toLowerCase();
+      const finalSlug = (typeof slugOverride === 'string' ? slugOverride : customShortSlug).trim().toLowerCase();
+      if (finalSlug) {
+        payload.alias = finalSlug;
       }
 
       const response = await fetch("https://api.tinyurl.com/create", {
@@ -746,6 +785,9 @@ export default function CastingDesk({ initialApplicant, onExit }: CastingDeskPro
 
       if (result.data?.tiny_url) {
         setShortenedUrl(result.data.tiny_url);
+        if (typeof slugOverride === 'string') {
+          setCustomShortSlug(slugOverride);
+        }
       } else {
         throw new Error("TinyURL API responded successfully, but the expected shortened link property was missing.");
       }
@@ -822,7 +864,7 @@ export default function CastingDesk({ initialApplicant, onExit }: CastingDeskPro
              type="button"
              onClick={() => {
                if (!isAdminMode && isSandbox === false) {
-                 alert("Please log in as Administrator 'hitbit2024@gmail.com' at the footer to view cloud recruiter files, or run details in Sandbox Mode.");
+                 alert("Please log in as an authorized Administrator/Recruiter to view cloud file updates, or run details in Demo Sandbox Mode.");
                }
                setCurrentMode('admin');
              }}
@@ -1917,8 +1959,27 @@ export default function CastingDesk({ initialApplicant, onExit }: CastingDeskPro
                     </div>
 
                     {shortenError && (
-                      <div className="text-[10px] text-red-400 font-mono bg-red-950/20 border border-red-900/30 p-2 mt-2">
-                        ⚠️ Err: {shortenError}
+                      <div className="text-[10px] text-red-400 font-mono bg-red-950/20 border border-red-900/30 p-3 mt-2 space-y-2">
+                        <div>⚠️ Err: {shortenError}</div>
+                        {shortenError.toLowerCase().includes("alias") && (
+                          <div className="pt-2 border-t border-red-900/40 space-y-1">
+                            <p className="text-[9px] text-zinc-400 leading-normal">
+                              The custom suffix &ldquo;{customShortSlug}&rdquo; is already taken. You can manually tweak it or auto-append a random number below:
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const randomSuffix = Math.floor(100 + Math.random() * 900);
+                                const baseSlug = customShortSlug || 'vivid-casting-apply';
+                                const newSlug = `${baseSlug}-${randomSuffix}`.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+                                handleShortenUrl(newSlug);
+                              }}
+                              className="px-2.5 py-1 bg-red-900 hover:bg-red-850 text-white rounded font-bold transition text-[9px] uppercase tracking-wider cursor-pointer"
+                            >
+                              ⚡ Auto-Fix Slug with random suffix
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
 

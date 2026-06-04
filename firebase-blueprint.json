@@ -18,6 +18,10 @@
           "format": "email",
           "description": "Applicant's email address"
         },
+        "phone": {
+          "type": "string",
+          "description": "Applicant's mobile or voice contact phone number"
+        },
         "age": {
           "type": "integer",
           "description": "The age of the applicant, must be 18+"
